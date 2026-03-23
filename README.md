@@ -197,10 +197,10 @@ git push origin feature/new-feature
 
 ---
 
-## 📬 Github Link
+## 📬 project Link
 
 GitHub:  https://github.com/Meghavathjyothibai/SmartStudy
-
+LiveLink: https://smartstudy-drab.vercel.app/
 ---
 
 ## 🎓 Project Highlights
