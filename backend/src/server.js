@@ -7,7 +7,7 @@ const compression = require('compression');
 const rateLimit = require('express-rate-limit');
 const { createServer } = require('http');
 const { Server } = require('socket.io');
-const jwt = require('jsonwebtoken'); // ← ADD THIS! It was missing
+const jwt = require('jsonwebtoken'); // ✅ ADD THIS - It was missing!
 
 const connectDB = require('./config/database');
 const reminderService = require('./services/reminderService');
@@ -22,7 +22,7 @@ const app = express();
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
   cors: {
-    origin: ['http://localhost', 'http://localhost:5173', 'http://localhost:5174', 'http://localhost:5175'],
+    origin: ['http://localhost', 'http://localhost:5173', 'http://localhost:5174', 'http://localhost:5175', 'https://smartstudy-drab.vercel.app'],
     credentials: true
   }
 });
@@ -41,17 +41,19 @@ const limiter = rateLimit({
 });
 app.use('/api', limiter);
 
-// CORS configuration - FIXED WITH ALL PORTS
+// CORS configuration - Updated with production URL
 const allowedOrigins = [
   'http://localhost',
-  'http://localhost:5173',    // Your current frontend port
-  'http://localhost:5174',    // Alternative port
-  'http://localhost:5175',    // Backup port
+  'http://localhost:5173',
+  'http://localhost:5174',
+  'http://localhost:5175',
   'http://localhost:3000',
   'http://127.0.0.1',
   'http://127.0.0.1:5173',
   'http://127.0.0.1:5174',
-  'http://127.0.0.1:5175'
+  'http://127.0.0.1:5175',
+  'https://smartstudy-drab.vercel.app',
+  'https://smartstudy-backend-icgt.onrender.com'
 ];
 
 app.use(cors({
@@ -59,7 +61,7 @@ app.use(cors({
     // Allow requests with no origin (like mobile apps, Postman, curl)
     if (!origin) return callback(null, true);
     
-    if (allowedOrigins.indexOf(origin) !== -1 || origin.includes('localhost')) {
+    if (allowedOrigins.indexOf(origin) !== -1 || origin.includes('localhost') || origin.includes('vercel.app')) {
       callback(null, true);
     } else {
       console.log('Blocked CORS origin:', origin);
@@ -82,20 +84,71 @@ if (process.env.NODE_ENV === 'development') {
   });
 }
 
+// ========== HEALTH CHECK ENDPOINTS ==========
+// Root endpoint
+app.get('/', (req, res) => {
+  res.json({
+    message: 'Smart Study API is running',
+    status: 'healthy',
+    version: '1.0.0',
+    timestamp: new Date().toISOString(),
+    endpoints: {
+      health: '/health',
+      api: '/api',
+      auth: '/api/auth',
+      tasks: '/api/tasks',
+      studyplan: '/api/studyplan',
+      analytics: '/api/analytics'
+    }
+  });
+});
+
+// Detailed health check
+app.get('/health', (req, res) => {
+  res.json({
+    status: 'healthy',
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+    mongodb: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
+    environment: process.env.NODE_ENV,
+    port: process.env.PORT || 5000
+  });
+});
+
+// API info endpoint
+app.get('/api', (req, res) => {
+  res.json({
+    message: 'Smart Study API',
+    version: '1.0.0',
+    endpoints: {
+      auth: {
+        register: 'POST /api/auth/register',
+        login: 'POST /api/auth/login',
+        profile: 'GET /api/auth/profile'
+      },
+      tasks: {
+        getAll: 'GET /api/tasks',
+        create: 'POST /api/tasks',
+        update: 'PUT /api/tasks/:id',
+        delete: 'DELETE /api/tasks/:id'
+      },
+      studyplan: {
+        active: 'GET /api/studyplan/active',
+        generate: 'POST /api/studyplan/generate'
+      },
+      analytics: {
+        overview: 'GET /api/analytics/overview',
+        timeline: 'GET /api/analytics/timeline'
+      }
+    }
+  });
+});
+
 // Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/tasks', taskRoutes);
 app.use('/api/studyplan', studyPlanRoutes);
 app.use('/api/analytics', analyticsRoutes);
-
-// Health check endpoint
-app.get('/health', (req, res) => {
-  res.json({
-    status: 'healthy',
-    timestamp: new Date().toISOString(),
-    uptime: process.uptime()
-  });
-});
 
 // Socket.io connection
 io.on('connection', (socket) => {
@@ -106,6 +159,7 @@ io.on('connection', (socket) => {
     try {
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
       socket.join(`user-${decoded.id}`);
+      console.log(`User ${decoded.id} authenticated for socket`);
     } catch (error) {
       console.error('Socket authentication error:', error);
     }
@@ -118,7 +172,7 @@ io.on('connection', (socket) => {
 
 // Error handling middleware
 app.use((err, req, res, next) => {
-  console.error(err.stack);
+  console.error('Error:', err.stack);
   
   if (err.name === 'ValidationError') {
     return res.status(400).json({
@@ -149,11 +203,11 @@ app.use((err, req, res, next) => {
   });
 });
 
-// 404 handler
+// 404 handler for undefined routes
 app.use('*', (req, res) => {
   res.status(404).json({
     success: false,
-    message: 'Route not found'
+    message: `Route not found: ${req.originalUrl}`
   });
 });
 
@@ -164,11 +218,24 @@ reminderService.start();
 const PORT = process.env.PORT || 5000;
 httpServer.listen(PORT, () => {
   console.log(`Server running in ${process.env.NODE_ENV} mode on port ${PORT}`);
+  console.log(`Health check: http://localhost:${PORT}/health`);
+  console.log(`API endpoint: http://localhost:${PORT}/api`);
 });
 
 // Graceful shutdown
 process.on('SIGTERM', () => {
   console.log('SIGTERM signal received: closing HTTP server');
+  httpServer.close(() => {
+    console.log('HTTP server closed');
+    mongoose.connection.close(false, () => {
+      console.log('MongoDB connection closed');
+      process.exit(0);
+    });
+  });
+});
+
+process.on('SIGINT', () => {
+  console.log('SIGINT signal received: closing HTTP server');
   httpServer.close(() => {
     console.log('HTTP server closed');
     mongoose.connection.close(false, () => {
