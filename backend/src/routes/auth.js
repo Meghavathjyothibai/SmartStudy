@@ -2,15 +2,23 @@ const express = require('express');
 const router = express.Router();
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
-const { validate, userValidation } = require('../middleware/validation');
-const { auth } = require('../middleware/auth');
+const bcrypt = require('bcryptjs');
 
 // @route   POST /api/auth/register
 // @desc    Register user
 // @access  Public
-router.post('/register', validate(userValidation.register), async (req, res) => {
+router.post('/register', async (req, res) => {
+  console.log('Register attempt:', req.body.email);
   try {
     const { name, email, password } = req.body;
+    
+    // Basic validation
+    if (!name || !email || !password) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide name, email and password'
+      });
+    }
     
     // Check if user exists
     const existingUser = await User.findOne({ email });
@@ -22,29 +30,37 @@ router.post('/register', validate(userValidation.register), async (req, res) => 
     }
     
     // Create user
-    const user = await User.create({
+    const user = new User({
       name,
       email,
       password
     });
     
+    await user.save();
+    
     // Generate token
     const token = jwt.sign(
-      { id: user._id, role: user.role },
+      { id: user._id, role: user.role || 'student' },
       process.env.JWT_SECRET,
-      { expiresIn: process.env.JWT_EXPIRE }
+      { expiresIn: process.env.JWT_EXPIRE || '7d' }
     );
     
     res.status(201).json({
       success: true,
       token,
-      user
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role
+      }
     });
   } catch (error) {
     console.error('Registration error:', error);
     res.status(500).json({
       success: false,
-      message: 'Server error during registration'
+      message: 'Server error during registration',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 });
@@ -52,13 +68,23 @@ router.post('/register', validate(userValidation.register), async (req, res) => 
 // @route   POST /api/auth/login
 // @desc    Login user
 // @access  Public
-router.post('/login', validate(userValidation.login), async (req, res) => {
+router.post('/login', async (req, res) => {
+  console.log('Login attempt:', req.body.email);
   try {
     const { email, password } = req.body;
     
-    // Find user
+    // Basic validation
+    if (!email || !password) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide email and password'
+      });
+    }
+    
+    // Find user with password field
     const user = await User.findOne({ email }).select('+password');
     if (!user) {
+      console.log('User not found:', email);
       return res.status(401).json({
         success: false,
         message: 'Invalid credentials'
@@ -68,6 +94,7 @@ router.post('/login', validate(userValidation.login), async (req, res) => {
     // Check password
     const isMatch = await user.comparePassword(password);
     if (!isMatch) {
+      console.log('Password mismatch for:', email);
       return res.status(401).json({
         success: false,
         message: 'Invalid credentials'
@@ -76,21 +103,28 @@ router.post('/login', validate(userValidation.login), async (req, res) => {
     
     // Generate token
     const token = jwt.sign(
-      { id: user._id, role: user.role },
+      { id: user._id, role: user.role || 'student' },
       process.env.JWT_SECRET,
-      { expiresIn: process.env.JWT_EXPIRE }
+      { expiresIn: process.env.JWT_EXPIRE || '7d' }
     );
     
+    console.log('Login successful for:', email);
     res.json({
       success: true,
       token,
-      user
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role
+      }
     });
   } catch (error) {
     console.error('Login error:', error);
     res.status(500).json({
       success: false,
-      message: 'Server error during login'
+      message: 'Server error during login',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 });
@@ -98,98 +132,37 @@ router.post('/login', validate(userValidation.login), async (req, res) => {
 // @route   GET /api/auth/me
 // @desc    Get current user
 // @access  Private
-router.get('/me', auth, async (req, res) => {
+router.get('/me', async (req, res) => {
   try {
-    res.json({
-      success: true,
-      user: req.user
-    });
-  } catch (error) {
-    console.error('Get user error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Server error'
-    });
-  }
-});
-
-// @route   PUT /api/auth/profile
-// @desc    Update profile
-// @access  Private
-router.put('/profile', auth, async (req, res) => {
-  try {
-    const { name, educationLevel, studyPreferences } = req.body;
-    
-    const user = await User.findById(req.user._id);
-    
-    if (name) user.name = name;
-    if (educationLevel) user.profile.educationLevel = educationLevel;
-    if (studyPreferences) {
-      user.profile.studyPreferences = {
-        ...user.profile.studyPreferences,
-        ...studyPreferences
-      };
+    const token = req.headers.authorization?.split(' ')[1];
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        message: 'No token provided'
+      });
     }
     
-    await user.save();
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const user = await User.findById(decoded.id).select('-password');
+    
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
     
     res.json({
       success: true,
       user
     });
   } catch (error) {
-    console.error('Update profile error:', error);
-    res.status(500).json({
+    console.error('Get user error:', error);
+    res.status(401).json({
       success: false,
-      message: 'Server error'
+      message: 'Invalid token'
     });
   }
-});
-
-// @route   POST /api/auth/change-password
-// @desc    Change password
-// @access  Private
-router.post('/change-password', auth, async (req, res) => {
-  try {
-    const { currentPassword, newPassword } = req.body;
-    
-    const user = await User.findById(req.user._id).select('+password');
-    
-    // Check current password
-    const isMatch = await user.comparePassword(currentPassword);
-    if (!isMatch) {
-      return res.status(401).json({
-        success: false,
-        message: 'Current password is incorrect'
-      });
-    }
-    
-    // Update password
-    user.password = newPassword;
-    await user.save();
-    
-    res.json({
-      success: true,
-      message: 'Password updated successfully'
-    });
-  } catch (error) {
-    console.error('Change password error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Server error'
-    });
-  }
-});
-
-// @route   POST /api/auth/logout
-// @desc    Logout user
-// @access  Private
-router.post('/logout', auth, (req, res) => {
-  // In a real app, you might want to blacklist the token
-  res.json({
-    success: true,
-    message: 'Logged out successfully'
-  });
 });
 
 module.exports = router;

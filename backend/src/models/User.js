@@ -110,9 +110,14 @@ userSchema.pre('save', async function(next) {
   }
 });
 
-// Compare password method
+// Compare password method - add this to userSchema
 userSchema.methods.comparePassword = async function(candidatePassword) {
-  return await bcrypt.compare(candidatePassword, this.password);
+  try {
+    return await bcrypt.compare(candidatePassword, this.password);
+  } catch (error) {
+    console.error('Password comparison error:', error);
+    return false;
+  }
 };
 
 // Generate JWT token
