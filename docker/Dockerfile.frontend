@@ -1,0 +1,31 @@
+# Stage 1: Build stage
+FROM node:18-alpine AS builder
+
+WORKDIR /app
+
+# Copy package files
+COPY frontend/package*.json ./
+
+# Install dependencies
+RUN npm install
+
+# Copy frontend source code
+COPY frontend/ .
+
+# Build the app
+RUN npm run build
+
+# Stage 2: Production stage with Nginx
+FROM nginx:alpine
+
+# Copy built assets from build stage
+COPY --from=builder /app/dist /usr/share/nginx/html
+
+# Copy nginx.conf from ROOT folder (parent directory)
+COPY ../nginx.conf /etc/nginx/nginx.conf
+
+# Expose port
+EXPOSE 80
+
+# Start Nginx
+CMD ["nginx", "-g", "daemon off;"]

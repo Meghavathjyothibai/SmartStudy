@@ -1,0 +1,17 @@
+**/node_modules
+**/npm-debug.log
+**/dist
+**/build
+**/.git
+**/.env
+**/.env.local
+**/.env.*.local
+**/.gitignore
+**/README.md
+**/coverage
+**/.vscode
+**/.idea
+**/*.log
+**/Dockerfile
+**/docker-compose*
+**/.dockerignore
